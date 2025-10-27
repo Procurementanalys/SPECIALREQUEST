@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Form Special Request Store</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+</head>
+<body class="p-4">
+
+  <div class="container">
+    <h3 class="fw-bold mb-4">Form Special Request Store</h3>
+
+    <!-- Pilih Store -->
+    <div class="mb-3">
+      <label class="form-label">Pilih Store:</label>
+      <select id="store" class="form-select">
+        <option value="">Memuat store...</option>
+      </select>
+    </div>
+
+    <!-- Cari Produk -->
+    <div class="mb-3">
+      <label class="form-label">Cari Produk:</label>
+      <input id="searchInput" class="form-control" placeholder="Ketik kode / nama produk" />
+      <ul id="resultList" class="list-group mt-2"></ul>
+    </div>
+
+    <h5 class="mt-4 fw-bold">Daftar Item</h5>
+    <table class="table table-bordered mt-2">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>Procode</th>
+          <th>Prodesc</th>
+          <th>Qty</th>
+          <th>Reason</th>
+          <th>Aksi</th>
+        </tr>
+      </thead>
+      <tbody id="itemTable"></tbody>
+    </table>
+
+    <button id="submitBtn" class="btn btn-primary">Submit</button>
+    <div id="message" class="mt-3"></div>
+  </div>
+
+  <script>
+    // === URL WEB APP (SUDAH SESUAI DENGAN PUNYAMU) ===
+    const API_URL = "https://script.google.com/macros/s/AKfycbx3CUZ-tkuBSXKUPQ5v3k6jkg77wo4e1wvjS_9jEBCPyEPK5Ahg11nQuMnRrv8RiA9S/exec";
+
+    const storeSelect = document.getElementById("store");
+    const searchInput = document.getElementById("searchInput");
+    const resultList = document.getElementById("resultList");
+    const itemTable = document.getElementById("itemTable");
+    const messageDiv = document.getElementById("message");
+    let allProducts = [];
+    let selectedItems = [];
+
+    // === Ambil data awal dari Google Sheet ===
+    async function loadData() {
+      try {
+        const res = await fetch(API_URL + "?v=" + Date.now()); // tambahkan cache buster
+        const data = await res.json();
+
+        // isi store
+        storeSelect.innerHTML = '<option value="">-- Pilih Store --</option>';
+        data.stores.forEach(s => {
+          const opt = document.createElement("option");
+          opt.value = `[${s.id}] ${s.name}`;
+          opt.textContent = `[${s.id}] ${s.name}`;
+          storeSelect.appendChild(opt);
+        });
+
+        // simpan produk ke memori
+        allProducts = data.items;
+      } catch (err) {
+        console.error(err);
+        storeSelect.innerHTML = '<option value="">Gagal memuat data store</option>';
+        messageDiv.innerHTML = `<span class="text-danger">❌ Gagal ambil data dari server</span>`;
+      }
+    }
+
+    loadData();
+
+    // === Pencarian produk ===
+    searchInput.addEventListener("keyup", e => {
+      const term = e.target.value.toLowerCase();
+      resultList.innerHTML = "";
+      if (term.length === 0) return;
+
+      const matches = allProducts.filter(p =>
+        p.code.toLowerCase().includes(term) || p.name.toLowerCase().includes(term)
+      );
+
+      matches.slice(0, 10).forEach(m => {
+        const li = document.createElement("li");
+        li.classList.add("list-group-item", "list-group-item-action");
+        li.textContent = `[${m.code}] ${m.name}`;
+        li.onclick = () => {
+          addItem(m);
+          resultList.innerHTML = "";
+          searchInput.value = "";
+        };
+        resultList.appendChild(li);
+      });
+    });
+
+    function addItem(prod) {
+      if (selectedItems.find(i => i.code === prod.code)) return;
+      selectedItems.push({ code: prod.code, name: prod.name, qty: 1, reason: "" });
+      renderTable();
+    }
+
+    function renderTable() {
+      itemTable.innerHTML = "";
+      selectedItems.forEach((item, i) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td>${item.code}</td>
+          <td>${item.name}</td>
+          <td><input type="number" class="form-control" value="${item.qty}" onchange="updateQty(${i}, this.value)"></td>
+          <td><input type="text" class="form-control" value="${item.reason}" onchange="updateReason(${i}, this.value)"></td>
+          <td><button class="btn btn-danger btn-sm" onclick="removeItem(${i})">Hapus</button></td>
+        `;
+        itemTable.appendChild(tr);
+      });
+    }
+
+    function updateQty(i, val) { selectedItems[i].qty = val; }
+    function updateReason(i, val) { selectedItems[i].reason = val; }
+    function removeItem(i) { selectedItems.splice(i, 1); renderTable(); }
+
+    // === Submit data ke Google Sheet ===
+    async function submitData() {
+      const store = storeSelect.value;
+      if (!store) return alert("Pilih store terlebih dahulu!");
+      if (selectedItems.length === 0) return alert("Belum ada item!");
+
+      const payload = {
+        store,
+        items: selectedItems.map(i => ({
+          procode: i.code,
+          prodesc: i.name,
+          qty: i.qty,
+          reason: i.reason
+        }))
+      };
+
+      messageDiv.innerHTML = "<span class='text-secondary'>⏳ Mengirim data...</span>";
+
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          mode: "cors"
+        });
+
+        const result = await res.json();
+        if (result.success) {
+          messageDiv.innerHTML = `<span class='text-success'>✅ ${result.message}</span>`;
+          selectedItems = [];
+          renderTable();
+        } else {
+          messageDiv.innerHTML = `<span class='text-danger'>❌ ${result.error}</span>`;
+        }
+      } catch (err) {
+        messageDiv.innerHTML = `<span class='text-danger'>❌ Gagal submit: ${err.message}</span>`;
+      }
+    }
+
+    document.getElementById("submitBtn").onclick = submitData;
+  </script>
+</body>
+</html>
